@@ -1,0 +1,20 @@
+{
+  "name": "skanetrafiken",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node main.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chalk": "4.1.2",
+    "cli-box": "^6.0.10",
+    "has-flag": "4.0.0",
+    "minimist": "^1.2.6",
+    "puppeteer": "^13.5.2"
+  },
+  "description": ""
+}
