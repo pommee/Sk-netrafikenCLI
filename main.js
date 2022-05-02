@@ -1,95 +1,100 @@
-const puppeteer = require("puppeteer");
+#!/usr/bin/env node
+
+const axios = require('axios');
 const chalk = require("chalk");
 const Box = require("cli-box");
-const args = require('minimist')(process.argv.slice(2));
-const hasFlag = require('has-flag')
+const args = require("minimist")(process.argv.slice(2));
+const hasFlag = require("has-flag")
 'use strict';
 
+let presetTravel = require("./preset.json")
 const flags = args;
-let page;
 
 (async () => {
     clearConsole()
     checkArgsError()
-    console.log(chalk.green("Launching webpage"))
-    const browser = await puppeteer.launch({headless: !hasFlag("-hf")});
-    page = await browser.newPage();
-    await page.goto('https://www.skanetrafiken.se/');
-    clearConsole()
-    await inputTravelInformation();
-    console.log(chalk.green("Searching for departures..."))
-    const sokResa = await page.$x('//*[@id="searchButton"]')
-    await sokResa[0].click()
-    await page.waitForSelector('.st-search-travel-result', {visible: true});
-
-    let data = await gatherData();
-    const alternatives = compressInfo(data[0], data[1], data[2], data[3]);
-    logAllDepartures(alternatives);
-    await browser.close();
+    logMsg(chalk.green("Give me a second..."))
+    await run()
 })();
 
-async function inputTravelInformation() {
-    console.log(chalk.green("Inputting destinations " + chalk.blue(flags.f + " -> " + chalk.yellow(flags.t))))
-    await page.type('input[id=fromDestinationAutocompleteCombobox]', flags.f)
-    await page.waitForSelector('#fromDestinationOption-0', {visible: true})
-    let destinationBox = await page.$x('//*[@id="fromDestinationOption-0"]')
-    await destinationBox[0].click()
-    await page.type('input[id=toDestinationAutocompleteCombobox]', flags.t)
-    await page.waitForSelector('#toDestinationOption-0', {visible: true})
-    destinationBox = await page.$x('//*[@id="toDestinationOption-0"]/div')
-    await destinationBox[0].click()
-    clearConsole()
-}
+async function run() {
+    let data = await axios.all([removeNordicLetters(presetTravel.from), removeNordicLetters(presetTravel.to)])
+        .then(axios.spread(async (...responses) => {
+            let from = axios.get(responses[0]).then(async response => {
+                for (let i = 0; i < response.data.points.length; i++) {
+                    let data = response.data.points[i];
+                    if (data.name === presetTravel.from) {
+                        return data;
+                    }
+                }
+            })
+            let to = axios.get(responses[1]).then(async response => {
+                for (let i = 0; i < response.data.points.length; i++) {
+                    let data = response.data.points[i];
+                    if (data.name === presetTravel.to) {
+                        return data;
+                    }
+                }
+            })
+            return [await from, await to]
+        }))
 
-async function gatherData() {
-    clearConsole()
-    console.log(chalk.green("Gathering data..."))
-    const fromAndToTime = await page.evaluate(
-        () => [...document.querySelectorAll('.st-time-stamp__planned')].map(elem => elem.innerText)
-    );
-    const fromAndToJourney = await page.evaluate(
-        () => [...document.querySelectorAll('.st-journey-overview__route__row__destinations')].map(elem => elem.innerText)
-    );
-    const journeyTime = await page.evaluate(
-        () => [...document.querySelectorAll('.st-journey-overview__route__container__info')].map(elem => elem.innerText)
-    );
-    const trainType = await page.evaluate(
-        () => [...document.querySelectorAll('.st-travel-rectangle__text')].map(elem => elem.innerText)
-    );
+    let journeys = [];
 
-    return [fromAndToTime, fromAndToJourney, journeyTime, trainType]
-}
+    axios.get("https://www.skanetrafiken.se/gw-tps/api/v2/Journey?fromPointId=" + await data[0].id2 +
+        "&fromPointType=STOP_AREA&toPointId=" + await data[1].id2 + "&toPointType=STOP_AREA&arrival=false&journeysAfter=6")
+        .then(response => {
+            for (let journey of response.data.journeys) {
+                let from = journey.routeLinks[0].from;
+                let to = journey.routeLinks[0].to;
+                let departure = {
+                    "id": journey.id,
+                    "routeFrom": {
+                        "from": from.name,
+                        "time": from.time,
+                        "pos": from.pos,
+                    },
+                    "routeTo": {
+                        "from": to.name,
+                        "time": to.time,
+                        "pos": to.pos
+                    },
+                    "trainType": journey.routeLinks[0].line.name,
+                }
+                if (journey.routeLinks[0].deviations !== undefined)
+                    departure["deviation"] = journey.routeLinks[0].deviations.text
+                else
+                    departure["deviation"] = ""
+                journeys.push(departure)
+            }
 
-function compressInfo(fromAndToTime, fromAndToJourney, journeyTime, trainType) {
-    let alternatives = []
-    let fromAndToTimeCounter = 0;
-    for (let i = 0; i < 4; i++) {
-        alternatives.push({
-            "fromTime": fromAndToTime[fromAndToTimeCounter],
-            "toTime": fromAndToTime[fromAndToTimeCounter + 1],
-            "fromStation": fromAndToJourney[i].split("\n")[0],
-            "toStation": fromAndToJourney[i].split("\n")[1],
-            "journeyTime": cleanTime(journeyTime[i]),
-            "trainType": trainType[i]
+            console.log(journeys)
+            logAllDeparturesAPI(journeys)
         })
-        fromAndToTimeCounter += 2;
-    }
-    return alternatives;
 }
 
-function cleanTime(time) {
-    time = time.toString().replace("Restid: ", "").replace(" min", "")
-    return time;
-}
-
-function logAllDepartures(departures) {
+function logAllDeparturesAPI(departures) {
     clearConsole()
-    for (let i = 0; i < departures.length; i++) {
-        let departure = departures[i];
+    for (let journey of departures) {
+        let msg;
+        let from = journey.routeFrom;
+        let to = journey.routeTo;
+        let travelTime = ((new Date(journey.routeTo.time).getTime() - new Date(journey.routeFrom.time).getTime()) / 1000) / 60;
+        if (journey.deviation !== "") {
+            msg = `${chalk.red.bold(journey.trainType)} - ${chalk.red(travelTime)} min
+                ${chalk.green(from.from)}   ->   ${chalk.yellow(to.from)}
+                ${chalk.green(from.time)}     ->   ${chalk.yellow(to.time)}
+                ⚠️ ${chalk.redBright(journey.deviation)}`;
+        } else {
+            msg = `${chalk.green.bold(journey.trainType)} - ${chalk.green(travelTime)} min
+                ${chalk.green(from.from)} -> ${chalk.yellow(to.from)}
+                ${chalk.green(from.time)} -> ${chalk.yellow(to.time)}`;
+        }
         const myBox = new Box({
             w: 50,
             h: 4,
             stringify: false,
+            stretch: true,
             marks: {
                 nw: '╭',
                 n: '─',
@@ -101,22 +106,36 @@ function logAllDepartures(departures) {
                 w: '│'
             },
             hAlign: 'left',
-        }, `${chalk.red.bold(departure.trainType)}
-                ${chalk.green(departure.fromStation)}   ->   ${chalk.yellow(departure.toStation)}
-                ${chalk.green(departure.fromTime)}     ->   ${chalk.yellow(departure.toTime)}
-                Journey: ${chalk.red(departure.journeyTime)} minutes`);
+        }, msg);
         console.log(myBox.stringify());
     }
 }
 
+function removeNordicLetters(word) {
+    word = word.replace("å", "%C3%A5")
+    word = word.replace("ä", "%C3%A4")
+    word = word.replace("ö", "%C3%B6")
+    return "https://www.skanetrafiken.se/gw-tps/api/v2/Points?name=" + word;
+}
+
+function clearConsole() {
+    process.stdout.write('\x1Bc');
+}
+
+function logMsg(message) {
+    clearConsole();
+    console.log(message)
+}
+
 function checkArgsError() {
+    if (hasFlag("-p")) {
+        flags.f = presetTravel.from;
+        flags.t = presetTravel.to;
+        return;
+    }
     if (flags.f === undefined || flags.t === undefined) {
         console.log("Please enter " + chalk.red("FROM") + " & " + chalk.yellow("TO"))
         console.log("example: 'node main " + chalk.red("MalmöC ") + chalk.yellow("HässleholmC'"))
         process.exit()
     }
-}
-
-function clearConsole() {
-    process.stdout.write('\x1Bc');
 }
