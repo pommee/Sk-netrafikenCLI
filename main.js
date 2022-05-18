@@ -1,15 +1,12 @@
 #!/usr/bin/env node
-
-const axios = require('axios');
+const axios = require("axios");
 const chalk = require("chalk");
 const Box = require("cli-box");
 const args = require("minimist")(process.argv.slice(2));
 const hasFlag = require("has-flag")
-'use strict';
-
+"use strict";
 let presetTravel = require("./preset.json")
 const flags = args;
-
 (async () => {
     clearConsole()
     checkArgsError()
@@ -38,9 +35,7 @@ async function run() {
             })
             return [await from, await to]
         }))
-
     let journeys = [];
-
     axios.get("https://www.skanetrafiken.se/gw-tps/api/v2/Journey?fromPointId=" + await data[0].id2 +
         "&fromPointType=STOP_AREA&toPointId=" + await data[1].id2 + "&toPointType=STOP_AREA&arrival=false&journeysAfter=6")
         .then(response => {
@@ -52,22 +47,25 @@ async function run() {
                     "routeFrom": {
                         "from": from.name,
                         "time": from.time,
-                        "pos": from.pos,
+                        "pos": from.pos.includes("Spår ") ? from.pos : from.pos.replace("Spår"),
                     },
                     "routeTo": {
                         "from": to.name,
                         "time": to.time,
-                        "pos": to.pos
+                        "pos": to.pos.includes("Spår ") ? to.pos : to.pos.replace("Spår")
                     },
                     "trainType": journey.routeLinks[0].line.name,
                 }
+                if (departure.routeFrom.pos.includes("undefined"))
+                    departure.routeFrom.pos = "Se skylt"
+                if (departure.routeTo.pos.includes("undefined"))
+                    departure.routeTo.pos = "Se skylt"
                 if (journey.routeLinks[0].deviations !== undefined)
-                    departure["deviation"] = journey.routeLinks[0].deviations.text
+                    departure["deviation"] = journey.routeLinks[0].deviations[0].text
                 else
                     departure["deviation"] = ""
                 journeys.push(departure)
             }
-
             console.log(journeys)
             logAllDeparturesAPI(journeys)
         })
@@ -79,35 +77,39 @@ function logAllDeparturesAPI(departures) {
         let msg;
         let from = journey.routeFrom;
         let to = journey.routeTo;
-        let travelTime = ((new Date(journey.routeTo.time).getTime() - new Date(journey.routeFrom.time).getTime()) / 1000) / 60;
+        let fromTime = new Date(journey.routeFrom.time);
+        let toTime = new Date(journey.routeTo.time);
+        let travelTime = ((toTime - fromTime) / 1000) / 60;
         if (journey.deviation !== "") {
             msg = `${chalk.red.bold(journey.trainType)} - ${chalk.red(travelTime)} min
                 ${chalk.green(from.from)}   ->   ${chalk.yellow(to.from)}
-                ${chalk.green(from.time)}     ->   ${chalk.yellow(to.time)}
-                ⚠️ ${chalk.redBright(journey.deviation)}`;
+                ${chalk.green(from.pos + " -> " + to.pos)}
+                ${chalk.green(fromTime.getHours() + ":" + fromTime.getMinutes())} -> ${chalk.yellow(toTime.getHours() + ":" + toTime.getMinutes())} :warning:`;
         } else {
             msg = `${chalk.green.bold(journey.trainType)} - ${chalk.green(travelTime)} min
                 ${chalk.green(from.from)} -> ${chalk.yellow(to.from)}
-                ${chalk.green(from.time)} -> ${chalk.yellow(to.time)}`;
+                ${chalk.green(from.pos + " -> " + to.pos)}
+                ${chalk.green(fromTime.getHours() + ":" + fromTime.getMinutes())} -> ${chalk.yellow(toTime.getHours() + ":" + toTime.getMinutes())}`;
         }
         const myBox = new Box({
             w: 50,
             h: 4,
             stringify: false,
-            stretch: true,
             marks: {
-                nw: '╭',
-                n: '─',
-                ne: '╮',
-                e: '│',
-                se: '╯',
-                s: '─',
-                sw: '╰',
-                w: '│'
+                nw: "╭",
+                n: "─",
+                ne: "╮",
+                e: "│",
+                se: "╯",
+                s: "─",
+                sw: "╰",
+                w: "│"
             },
-            hAlign: 'left',
+            hAlign: "left",
         }, msg);
         console.log(myBox.stringify());
+        if (journey.deviation !== "")
+            console.log(journey.deviation)
     }
 }
 
@@ -119,7 +121,7 @@ function removeNordicLetters(word) {
 }
 
 function clearConsole() {
-    process.stdout.write('\x1Bc');
+    process.stdout.write("\x1Bc");
 }
 
 function logMsg(message) {
@@ -128,6 +130,10 @@ function logMsg(message) {
 }
 
 function checkArgsError() {
+    if (hasFlag("-h")) {
+        help()
+        return;
+    }
     if (hasFlag("-p")) {
         flags.f = presetTravel.from;
         flags.t = presetTravel.to;
@@ -135,7 +141,14 @@ function checkArgsError() {
     }
     if (flags.f === undefined || flags.t === undefined) {
         console.log("Please enter " + chalk.red("FROM") + " & " + chalk.yellow("TO"))
-        console.log("example: 'node main " + chalk.red("MalmöC ") + chalk.yellow("HässleholmC'"))
+        console.log("example: 'node main " + chalk.red("StockholmC ") + chalk.yellow("MalmöC"))
         process.exit()
     }
+}
+
+function help() {
+    console.log("-f / Where you want to travel from")
+    console.log("-t / Where you want to travel to")
+    console.log("-p / Use the values in perset.json")
+    process.exit()
 }
